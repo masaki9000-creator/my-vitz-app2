@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import * as d3 from 'd3';
 import { overseasData, oncologyData, rdData, TOP5 } from '../utils/chartData';
 
-export const useStarChartSimulation = ({ dimensions, isBig, isRed, isSplit, isOncology, isRandD }) => {
+export const useStarChartSimulation = ({ dimensions, isBig, isRed, isSplit, isOncology, isRandD, isFocusAstellas }) => {
   const { width, height } = dimensions;
 
   const [csvData, setCsvData] = useState([]);
@@ -14,9 +14,11 @@ export const useStarChartSimulation = ({ dimensions, isBig, isRed, isSplit, isOn
   const top5MapRef = useRef(new Map());
   const timerRef = useRef(null);
   const timerRef2 = useRef(null);
+  const timerRef3 = useRef(null);
   const gradientRatiosRef = useRef(new Map());
-  const prevProps = useRef({ isBig, isRed, isSplit, isOncology, isRandD });
+  const prevProps = useRef({ isBig, isRed, isSplit, isOncology, isRandD, isFocusAstellas });
   const isTransitioningRef = useRef(false);
+  const [focusTransforms, setFocusTransforms] = useState(new Map());
 
   // Fetch CSV once
   useEffect(() => {
@@ -83,6 +85,7 @@ export const useStarChartSimulation = ({ dimensions, isBig, isRed, isSplit, isOn
     if (simulationRef.current) simulationRef.current.stop();
     if (timerRef.current) timerRef.current.stop();
     if (timerRef2.current) timerRef2.current.stop();
+    if (timerRef3.current) timerRef3.current.stop();
 
     const { dotCenterY, titleBottom, sizeScale, top5Positions } = layoutParams;
     const top5Map = new Map(top5Positions.map(p => [p.company, p]));
@@ -141,6 +144,7 @@ export const useStarChartSimulation = ({ dimensions, isBig, isRed, isSplit, isOn
       simulation.stop();
       if (timerRef.current) timerRef.current.stop();
       if (timerRef2.current) timerRef2.current.stop();
+      if (timerRef3.current) timerRef3.current.stop();
     };
   }, [layoutParams, width, height]);
 
@@ -262,7 +266,7 @@ export const useStarChartSimulation = ({ dimensions, isBig, isRed, isSplit, isOn
         setSplitRatioState({ isOncology, isRandD, opacity: 1 });
       }, 500);
       
-      prevProps.current = { isBig, isRed, isSplit, isOncology, isRandD };
+      prevProps.current = { ...prevProps.current, isBig, isRed, isSplit, isOncology, isRandD };
       return () => {
         clearTimeout(id);
         if (timerRef2.current) timerRef2.current.stop();
@@ -271,8 +275,103 @@ export const useStarChartSimulation = ({ dimensions, isBig, isRed, isSplit, isOn
       setSplitRatioState({ isOncology, isRandD, opacity: isSplit ? 1 : 0 });
     }
 
-    prevProps.current = { isBig, isRed, isSplit, isOncology, isRandD };
+    prevProps.current = { ...prevProps.current, isBig, isRed, isSplit, isOncology, isRandD };
   }, [isBig, isRed, isSplit, isOncology, isRandD, layoutParams]);
+
+  // Focus Astellas Transition
+  const focusTransformsRef = useRef(new Map());
+  useEffect(() => {
+    if (!layoutParams) return;
+
+    // Always stop any existing animation
+    if (timerRef3.current) timerRef3.current.stop();
+
+    // If isFocusAstellas is false and there are no active transforms, nothing to do
+    if (!isFocusAstellas && focusTransformsRef.current.size === 0) return;
+
+    const { top5Positions } = layoutParams;
+    const centerX = width / 2;
+    const centerY = height * 0.52;
+
+    // Capture start values from current focusTransforms or default positions
+    const startMap = new Map();
+    top5Positions.forEach(pos => {
+      const current = focusTransformsRef.current.get(pos.company);
+      startMap.set(pos.company, {
+        x: current ? current.x : pos.x,
+        y: current ? current.y : pos.y,
+        opacity: current ? current.opacity : 1,
+        scale: current ? current.scale : 1,
+        textScale: current && current.textScale !== undefined ? current.textScale : 1,
+        baseOpacity: current && current.baseOpacity !== undefined ? current.baseOpacity : 1
+      });
+    });
+
+    timerRef3.current = d3.timer(elapsed => {
+      const duration = 800;
+      const t = Math.min(1, elapsed / duration);
+      const easeT = d3.easeCubicOut(t);
+
+      const newMap = new Map();
+      top5Positions.forEach(pos => {
+        const isAstellas = pos.company === 'アステラス製薬';
+        const start = startMap.get(pos.company);
+
+        if (isFocusAstellas) {
+          // Astellas moves to center, others fade out
+          const targetX = isAstellas ? centerX : pos.x;
+          const targetY = isAstellas ? centerY : pos.y;
+          const targetOpacity = isAstellas ? 1 : 0;
+          const targetScale = isAstellas ? 1 : 0.3;
+          const targetTextScale = isAstellas ? 1.5 : 1;
+          const targetBaseOpacity = 0;
+
+          newMap.set(pos.company, {
+            x: start.x + (targetX - start.x) * easeT,
+            y: start.y + (targetY - start.y) * easeT,
+            opacity: start.opacity + (targetOpacity - start.opacity) * easeT,
+            scale: start.scale + (targetScale - start.scale) * easeT,
+            textScale: start.textScale + (targetTextScale - start.textScale) * easeT,
+            baseOpacity: start.baseOpacity + (targetBaseOpacity - start.baseOpacity) * easeT
+          });
+        } else {
+          // Reverse: all return to original positions
+          const targetX = pos.x;
+          const targetY = pos.y;
+          const targetOpacity = 1;
+          const targetScale = 1;
+          const targetTextScale = 1;
+          const targetBaseOpacity = 1;
+
+          newMap.set(pos.company, {
+            x: start.x + (targetX - start.x) * easeT,
+            y: start.y + (targetY - start.y) * easeT,
+            opacity: start.opacity + (targetOpacity - start.opacity) * easeT,
+            scale: start.scale + (targetScale - start.scale) * easeT,
+            textScale: start.textScale + (targetTextScale - start.textScale) * easeT,
+            baseOpacity: start.baseOpacity + (targetBaseOpacity - start.baseOpacity) * easeT
+          });
+        }
+      });
+
+      focusTransformsRef.current = newMap;
+      setFocusTransforms(newMap);
+      setTick(tick => tick + 1);
+
+      if (t === 1) {
+        timerRef3.current.stop();
+        if (!isFocusAstellas) {
+          // Clear focus transforms when fully reversed
+          focusTransformsRef.current = new Map();
+          setFocusTransforms(new Map());
+        }
+      }
+    });
+
+    return () => {
+      if (timerRef3.current) timerRef3.current.stop();
+    };
+  }, [isFocusAstellas, layoutParams, width, height]);
 
   return {
     nodes: nodesRef.current,
@@ -280,6 +379,7 @@ export const useStarChartSimulation = ({ dimensions, isBig, isRed, isSplit, isOn
     csvData,
     gradientRatiosRef,
     splitRatioState,
-    top5Map: top5MapRef.current
+    top5Map: top5MapRef.current,
+    focusTransforms
   };
 };
